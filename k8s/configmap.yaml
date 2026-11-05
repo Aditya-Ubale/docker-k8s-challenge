@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: task-tracker-config
+data:
+  APP_ENV: "production"
+  GREETING: "Running on Kubernetes"
+  APP_VERSION: "1.0.0"

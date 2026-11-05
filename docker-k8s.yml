@@ -1,0 +1,119 @@
+name: Docker and Kubernetes Challenge
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  IMAGE: adityaubale/task-tracker:1.0
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 01 Identity
+        run: |
+          echo "Name: Aditya Ubale | PRN: 202301040111"
+          echo "IA Activity 2: Containerization and Kubernetes Deployment"
+          date
+
+      - name: 02 Prepare screenshot tool
+        run: |
+          pip install playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: 03 Build Docker image
+        run: |
+          cd app
+          docker build -t $IMAGE .
+
+      - name: 04 Image details
+        run: |
+          docker images adityaubale/task-tracker
+          docker history $IMAGE
+
+      - name: 05 Run the container
+        run: |
+          docker run -d --name task-tracker -p 3000:3000 $IMAGE
+          sleep 4
+          docker ps --filter name=task-tracker
+          docker logs task-tracker
+
+      - name: 06 Test the running container
+        run: |
+          curl -s localhost:3000/health; echo
+          curl -s localhost:3000/api/info; echo
+          curl -s localhost:3000/api/tasks; echo
+          curl -s -X POST -H "Content-Type: application/json" -d '{"title":"Write report"}' localhost:3000/api/tasks; echo
+          curl -s localhost:3000/api/tasks; echo
+          docker inspect --format 'Health status: {{.State.Health.Status}}' task-tracker
+          python3 tools/shot.py http://localhost:3000/ container_page.png
+
+      - name: 07 Stop the container
+        run: docker rm -f task-tracker
+
+      - name: 08 Create Kubernetes cluster (kind)
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: demo
+          config: k8s/kind-config.yaml
+
+      - name: 09 Cluster status
+        run: |
+          kubectl get nodes -o wide
+          kubectl cluster-info
+
+      - name: 10 Load image and deploy
+        run: |
+          kind load docker-image $IMAGE --name demo
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/task-tracker --timeout=120s
+
+      - name: 11 Pods, deployment and service
+        run: |
+          kubectl get deployments
+          kubectl get pods -o wide
+          kubectl get svc
+          kubectl get configmap
+
+      - name: 12 Describe deployment and service
+        run: |
+          kubectl describe deployment task-tracker
+          kubectl describe svc task-tracker-service
+
+      - name: 13 Access the service and load balancing
+        run: |
+          kubectl get endpoints task-tracker-service
+          curl -s localhost:8080/health; echo
+          for i in 1 2 3 4 5 6; do curl -s localhost:8080/api/info | grep -o '"hostname":"[^"]*"'; done
+          python3 tools/shot.py http://localhost:8080/ k8s_page.png
+
+      - name: 14 Scaling and self-healing
+        run: |
+          kubectl scale deployment task-tracker --replicas=5
+          kubectl rollout status deployment/task-tracker --timeout=120s
+          kubectl get pods
+          POD=$(kubectl get pods -l app=task-tracker -o jsonpath='{.items[0].metadata.name}')
+          echo "Deleting pod $POD"
+          kubectl delete pod $POD
+          sleep 5
+          kubectl get pods
+          kubectl scale deployment task-tracker --replicas=3
+
+      - name: 15 Rolling restart and pod logs
+        run: |
+          kubectl rollout restart deployment/task-tracker
+          kubectl rollout status deployment/task-tracker --timeout=120s
+          kubectl rollout history deployment/task-tracker
+          kubectl get pods
+          POD=$(kubectl get pods -l app=task-tracker -o jsonpath='{.items[0].metadata.name}')
+          kubectl logs $POD
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: page-screenshots
+          path: "*.png"
